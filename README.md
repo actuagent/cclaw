@@ -8,8 +8,8 @@
 
 仓库内保留了上游提供的互动教程，用于帮助理解底层架构与代码数据流：
 
-- 🇨🇳 [中文版](./docs/cclaw-course_zh.html)
-- 🇬🇧 [英文版](./docs/cclaw-course.html)
+- 🇨🇳 [中文版](https://actuagent.github.io/cclaw/cclaw-course_zh.html)
+- 🇬🇧 [英文版](https://actuagent.github.io/cclaw/cclaw-course.html)
 
 ## 功能概览
 
