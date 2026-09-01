@@ -1,0 +1,274 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// Duration wraps time.Duration for JSON serialization as a human-readable string (e.g. "30m", "5s").
+type Duration struct {
+	time.Duration
+}
+
+// MarshalJSON encodes Duration as its string form (e.g. "30m").
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.Duration.String())
+}
+
+// UnmarshalJSON accepts either a duration string ("30m") or a number of
+// seconds. An empty string decodes to zero.
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		var n float64
+		if numErr := json.Unmarshal(b, &n); numErr != nil {
+			return fmt.Errorf("duration must be a string (e.g. \"30m\") or number of seconds: %w", err)
+		}
+		d.Duration = time.Duration(n * float64(time.Second))
+		return nil
+	}
+	if s == "" {
+		d.Duration = 0
+		return nil
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", s, err)
+	}
+	d.Duration = parsed
+	return nil
+}
+
+// Config 是 CCLAW 的顶层配置，聚合 Agent、模型、渠道、网关、工具与数据目录配置。
+type Config struct {
+	Agent     AgentConfig               `json:"agent"`
+	Providers map[string]ProviderConfig `json:"providers,omitempty"`
+	Channels  ChannelsConfig            `json:"channels"`
+	Gateway   GatewayConfig             `json:"gateway"`
+	Tools     ToolsConfig               `json:"tools"`
+	Data      DataConfig                `json:"data"`
+	Trace     TracingConfig             `json:"trace"`
+}
+
+// AgentConfig holds the runtime parameters for the agent loop and the
+// default model selection.
+type AgentConfig struct {
+	PromptDir           string  `json:"promptDir"`
+	BuiltinSkillsDir    string  `json:"builtinSkillsDir"`
+	ContextWindowTokens int     `json:"contextWindowTokens"`
+	MaxStep             int     `json:"maxStep"`
+	MaxTokens           int     `json:"maxTokens,omitempty"`
+	Temperature         float64 `json:"temperature,omitempty"`
+	ReasoningEffort     string  `json:"reasoningEffort,omitempty"`
+	Provider            string  `json:"provider,omitempty"` // "auto" or explicit provider name
+	Model               string  `json:"model,omitempty"`    // model name
+}
+
+// ProviderConfig holds credentials and endpoint for an LLM provider.
+type ProviderConfig struct {
+	APIKey       string            `json:"apiKey,omitempty"`
+	APISecret    string            `json:"apiSecret,omitempty"`
+	APIBase      string            `json:"apiBase,omitempty"`
+	ExtraHeaders map[string]string `json:"extraHeaders,omitempty"`
+}
+
+// ChannelsConfig groups the configuration for every supported channel.
+type ChannelsConfig struct {
+	SendProgress  bool                `json:"sendProgress,omitempty"`
+	SendToolHints bool                `json:"sendToolHints,omitempty"`
+	Feishu        FeishuChannelConfig `json:"feishu"`
+	Extra         map[string]any      `json:"extra,omitempty"`
+}
+
+// FeishuChannelConfig holds the credentials and access policy for the
+// Feishu (Lark) channel.
+type FeishuChannelConfig struct {
+	AppID             string   `json:"appId"`
+	AppSecret         string   `json:"appSecret"`
+	VerificationToken string   `json:"verificationToken"`
+	EncryptKey        string   `json:"encryptKey"`
+	AllowFrom         []string `json:"allowFrom,omitempty"`
+	GroupPolicy       string   `json:"groupPolicy,omitempty"`
+}
+
+// GatewayConfig groups gateway-side services (heartbeat, cron).
+type GatewayConfig struct {
+	Heartbeat HeartbeatConfig   `json:"heartbeat"`
+	Cron      CronGatewayConfig `json:"cron"`
+}
+
+// HeartbeatConfig configures the heartbeat scheduler.
+type HeartbeatConfig struct {
+	Enabled  *bool    `json:"enabled,omitempty"`
+	Path     string   `json:"path"`
+	Interval Duration `json:"interval"`
+}
+
+// IsEnabled returns whether heartbeat is enabled (defaults to true when not explicitly set).
+func (h *HeartbeatConfig) IsEnabled() bool {
+	if h.Enabled == nil {
+		return true
+	}
+	return *h.Enabled
+}
+
+// CronGatewayConfig configures persistence for the cron gateway.
+type CronGatewayConfig struct {
+	StorePath string `json:"storePath"`
+}
+
+// ToolsConfig groups tool subsystem configuration.
+type ToolsConfig struct {
+	Workspace           string      `json:"workspace"`
+	RestrictToWorkspace bool        `json:"restrictToWorkspace"`
+	ExtraReadDirs       []string    `json:"extraReadDirs,omitempty"`
+	Web                 WebConfig   `json:"web"`
+	Exec                ExecConfig  `json:"exec"`
+	MCP                 []MCPConfig `json:"mcp,omitempty"`
+}
+
+// WebConfig configures web-related tools (HTTP proxy, search).
+type WebConfig struct {
+	Proxy  string          `json:"proxy,omitempty"`
+	Search WebSearchConfig `json:"search"`
+}
+
+// WebSearchConfig configures the web_search tool's upstream provider.
+type WebSearchConfig struct {
+	Provider   string `json:"provider"`
+	APIKey     string `json:"apiKey,omitempty"`
+	BaseURL    string `json:"baseUrl,omitempty"`
+	MaxResults int    `json:"maxResults,omitempty"`
+}
+
+// ExecConfig configures the shell exec tool's safety limits.
+type ExecConfig struct {
+	Timeout       Duration `json:"timeout"`
+	MaxOutput     int      `json:"maxOutput,omitempty"`
+	DenyPatterns  []string `json:"denyPatterns,omitempty"`
+	AllowPatterns []string `json:"allowPatterns,omitempty"`
+	PathAppend    string   `json:"pathAppend,omitempty"`
+}
+
+// MCPConfig describes one MCP (Model Context Protocol) server connection.
+type MCPConfig struct {
+	Name         string            `json:"name"`
+	Type         string            `json:"type,omitempty"`
+	Command      string            `json:"command,omitempty"`
+	Args         []string          `json:"args,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	URL          string            `json:"url,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	ToolTimeout  Duration          `json:"toolTimeout,omitempty"`
+	EnabledTools []string          `json:"enabledTools,omitempty"`
+}
+
+// DataConfig is kept for backward compatibility with existing config files.
+// New code should use config.GetSessionsDir() / config.GetMemoryDir() instead.
+type DataConfig struct {
+	Dir       string `json:"dir"`
+	MemoryDir string `json:"memoryDir"`
+}
+
+// TracingConfig holds Langfuse tracing settings.
+type TracingConfig struct {
+	Enabled   bool   `json:"enabled"`
+	Endpoint  string `json:"endpoint"`
+	PublicKey string `json:"publicKey"`
+	SecretKey string `json:"secretKey"`
+}
+
+// WorkspacePath 返回解析并创建后的 Agent 工作区路径。
+func (c *Config) WorkspacePath() string {
+	return GetWorkspacePath(c.Tools.Workspace)
+}
+
+// ResolveSessionsDir 返回解析并创建后的会话目录。
+// 显式配置 Data.Dir 时优先使用该路径，否则使用 `~/.cclaw/sessions`。
+func (c *Config) ResolveSessionsDir() string {
+	if c.Data.Dir != "" {
+		return ensureDir(expandHome(c.Data.Dir))
+	}
+	return GetSessionsDir()
+}
+
+// ResolveMemoryDir 返回解析并创建后的记忆目录。
+// 显式配置 Data.MemoryDir 时优先使用该路径，否则使用 `~/.cclaw/memory`。
+func (c *Config) ResolveMemoryDir() string {
+	if c.Data.MemoryDir != "" {
+		return ensureDir(expandHome(c.Data.MemoryDir))
+	}
+	return GetMemoryDir()
+}
+
+// ResolveCronStorePath returns the cron job store file path.
+func (c *Config) ResolveCronStorePath() string {
+	if c.Gateway.Cron.StorePath != "" {
+		return expandHome(c.Gateway.Cron.StorePath)
+	}
+	return GetCronStorePath()
+}
+
+// ResolvePromptDir returns the prompt directory.
+func (c *Config) ResolvePromptDir() string {
+	if c.Agent.PromptDir != "" {
+		return ensureDir(expandHome(c.Agent.PromptDir))
+	}
+	return GetPromptsDir()
+}
+
+// ResolveSkillsDir returns the builtin skills directory.
+func (c *Config) ResolveSkillsDir() string {
+	if c.Agent.BuiltinSkillsDir != "" {
+		return ensureDir(expandHome(c.Agent.BuiltinSkillsDir))
+	}
+	return GetSkillsDir()
+}
+
+// GetProvider returns the ProviderConfig for the given provider name.
+func (c *Config) GetProvider(name string) (ProviderConfig, bool) {
+	if p, ok := c.Providers[name]; ok {
+		return p, true
+	}
+	return ProviderConfig{}, false
+}
+
+// GetAPIKey returns the API key for the given provider.
+func (c *Config) GetAPIKey(providerName string) string {
+	p, ok := c.GetProvider(providerName)
+	if ok {
+		return p.APIKey
+	}
+	return ""
+}
+
+// GetAPIBase returns the API base URL for the given provider.
+func (c *Config) GetAPIBase(providerName string) string {
+	p, ok := c.GetProvider(providerName)
+	if ok && p.APIBase != "" {
+		return p.APIBase
+	}
+	return ""
+}
+
+// EffectiveModel returns the model name.
+// Priority: Agent.Model > "gpt-4o".
+func (c *Config) EffectiveModel() string {
+	if c.Agent.Model != "" {
+		return c.Agent.Model
+	}
+	return "gpt-4o"
+}
+
+// EffectiveProviderName returns the provider name to use.
+// Checks Agent.Provider first ("auto" means auto-detect), then falls back to "openai".
+func (c *Config) EffectiveProviderName() string {
+	if c.Agent.Provider != "" && c.Agent.Provider != "auto" {
+		return c.Agent.Provider
+	}
+	return "openai"
+}
